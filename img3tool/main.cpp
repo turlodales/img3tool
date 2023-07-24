@@ -224,6 +224,7 @@ int main_r(int argc, const char * argv[]) {
         }
     }else if (flags & FLAG_CREATE) {
         retassure(outFile, "Outfile required for operation");
+        retassure(img3Type, "img3Type required for operation");
         std::vector<uint8_t> img3;
         if (payloadimg3) {
             img3 = readFromFile(payloadimg3);
