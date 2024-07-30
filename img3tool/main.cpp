@@ -109,6 +109,22 @@ plist_t readPlistFromFile(const char *filePath){
 }
 #endif //HAVE_PLIST
 
+void saveToFile(const char *filePath, const void *buf, size_t bufSize){
+    FILE *f = NULL;
+    cleanup([&]{
+        if (f) {
+            fclose(f);
+        }
+    });
+    
+    if (strcmp(filePath, "-") == 0) {
+        write(STDERR_FILENO, buf, bufSize);
+    }else{
+        retassure(f = fopen(filePath, "wb"), "failed to create file");
+        retassure(fwrite(buf, 1, bufSize, f) == bufSize, "failed to write to file");
+    }
+}
+
 MAINFUNCTION
 int main_r(int argc, const char * argv[]) {
     info("%s",version());
@@ -185,6 +201,19 @@ int main_r(int argc, const char * argv[]) {
                 return -1;
         }
     }
+    
+    if (outFile && strcmp(outFile, "-") == 0) {
+        int s_out = -1;
+        int s_err = -1;
+        cleanup([&]{
+            safeClose(s_out);
+            safeClose(s_err);
+        });
+        s_out = dup(STDOUT_FILENO);
+        s_err = dup(STDERR_FILENO);
+        dup2(s_out, STDERR_FILENO);
+        dup2(s_err, STDOUT_FILENO);
+    }
 
     if (argc-optind == 1) {
         argc -= optind;
@@ -200,14 +229,24 @@ int main_r(int argc, const char * argv[]) {
     tihmstar::Mem workingBuf;
 
     if (lastArg) {
-        workingBuf = readFromFile(lastArg);
+        if (strcmp(lastArg, "-") == 0){
+            char cbuf[0x1000] = {};
+            ssize_t didRead = 0;
+            
+            while ((didRead = read(STDIN_FILENO, cbuf, sizeof(cbuf))) > 0) {
+                workingBuf.append(cbuf, didRead);
+            }
+            
+        }else{
+            workingBuf = tihmstar::readFile(lastArg);
+        }
     }
 
     if (flags & FLAG_EXTRACT) {
         retassure(outFile, "Outfile required for operation");
         const char *compression = NULL;
         auto outdata = getPayloadFromIMG3(workingBuf.data(),workingBuf.size(), decryptIv, decryptKey);
-        tihmstar::writeFile(outFile, outdata.data(), outdata.size());
+        saveToFile(outFile, outdata.data(), outdata.size());
         if (compression) {
             info("Extracted (and uncompressed %s) IMG3 payload to %s",compression,outFile);
         }else{
@@ -236,20 +275,20 @@ int main_r(int argc, const char * argv[]) {
 #endif
         }
 
-        tihmstar::writeFile(outFile, img3.data(), img3.size());
+        saveToFile(outFile, img3.data(), img3.size());
         info("Created IMG3 file at %s",outFile);
     }else if (flags & FLAG_RENAME){
         retassure(outFile, "outputfile required");
 
         auto img3 = renameIMG3(workingBuf.data(), workingBuf.size(), img3Type);
-        tihmstar::writeFile(outFile, img3.data(), img3.size());
+        saveToFile(outFile, img3.data(), img3.size());
         info("Saved new renamed IMG3 to %s",outFile);
     } else if (replaceTemplateFilePath) {
         retassure(outFile, "Outfile required for operation");
         tihmstar::Mem templateFile = readFromFile(replaceTemplateFilePath);
         auto img3 = replaceDATAinIMG3(templateFile, workingBuf);
         img3 = removeTagFromIMG3(img3.data(), img3.size(), 'KBAG');
-        tihmstar::writeFile(outFile, img3.data(), img3.size());
+        saveToFile(outFile, img3.data(), img3.size());
         info("Created IMG3 file at %s",outFile);
     }else if (flags & FLAG_VERIFY){
         info("Verifying IMG3 file");
